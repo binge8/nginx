@@ -1,0 +1,48 @@
+name: Update Checker
+
+env:
+  IMAGE_NAME: nginx:alpine
+
+on:
+  repository_dispatch:
+    types: Update-Nginx
+  workflow_dispatch:
+  #schedule:
+  #  - cron: 58 15 * * *
+
+jobs:
+  check:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 获取Hash
+        id: getHash
+        run: |
+          docker pull $IMAGE_NAME
+          echo "commitHash=$(docker images -q $IMAGE_NAME )" >> $GITHUB_OUTPUT
+      - name: 比较Hash
+        id: cacheHash
+        uses: actions/cache@main
+        with:
+          path: .commitHash
+          key: HEAD-${{ steps.getHash.outputs.commitHash }}
+      - name: 保存Hash
+        if: steps.cacheHash.outputs.cache-hit != 'true'
+        run: |
+          echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
+      - name: 删除运行记录
+        if: always()
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.RELEASES_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 5
+          keep_minimum_runs: 3
+      - name: 微信推送
+        if: always()
+        run: |
+          if [ "${{steps.cacheHash.outputs.cache-hit}}" = "true" ];then
+            curl -H "Content-Type:application/json" -X POST -d '{"token":"${{ secrets.pushbot }}","title":"Nginx无更新，暂停构建","content":"Nginx无更新，暂停构建B","template":"json"}' http://www.pushplus.plus/send
+          else
+            curl -H "Content-Type:application/json" -X POST -d '{"token":"${{ secrets.pushbot }}","title":"Nginx有更新，开始构建","content":"Nginx有更新，开始构建B","template":"json"}' http://www.pushplus.plus/send
+            curl -X POST https://api.github.com/repos/binge8/nginx/dispatches -H "Accept: application/vnd.github.everest-preview+json" -H "Authorization: token ${{ secrets.RELEASES_TOKEN }}" --data '{"event_type": "nginx"}'
+          fi
