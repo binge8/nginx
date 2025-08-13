@@ -1,0 +1,61 @@
+name: nginx
+
+on:
+  repository_dispatch:
+    types: nginx
+  workflow_dispatch:
+  #schedule:
+    #- cron: 0 0 * * 0,3
+
+env:
+  DOCKER_BUILD_CHECKS_ANNOTATIONS: false
+  DOCKER_BUILD_SUMMARY: false
+  DOCKER_BUILD_RECORD_UPLOAD: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@master
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@master
+      - name: Login to DockerHub
+        uses: docker/login-action@master
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Build and push
+        id: build_push
+        uses: docker/build-push-action@master
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7,linux/386,linux/ppc64le,linux/s390x
+          push: true
+          tags: bin20088/nginx:1.0,bin20088/nginx:latest
+      - name: 设置微信推送变量
+        if: ${{ always() }}
+        run: |
+          if [ "${{ steps.build_push.outcome }}" = "success" ]; then
+            echo "STATUS=✅ Nginx构建成功" >> $GITHUB_ENV
+          else
+            echo "STATUS=❌ Nginx构建失败" >> $GITHUB_ENV
+          fi
+      - name: 企业微信应用消息推送
+        if: ${{ always() }}
+        env:
+          CORP_ID: ${{ secrets.CORP_ID }}
+          CORP_SECRET: ${{ secrets.CORP_SECRET }}
+          AGENT_ID: ${{ secrets.AGENT_ID }}
+          TEXT:  |
+            🚀GitHub Action 通知
+            
+            仓库: ${{ github.repository }}
+            -----------------------------
+            ${{ env.STATUS }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}  # 代理（可选）
+        run: |
+          wget --no-check-certificate https://ac.cxw28.cn/notify.py && chmod +x notify.py
+          python3 notify.py

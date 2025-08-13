@@ -1,0 +1,67 @@
+name: Update Checker
+
+env:
+  IMAGE_NAME: nginx:alpine
+
+on:
+  repository_dispatch:
+    types: Update-Nginx
+  workflow_dispatch:
+  #schedule:
+  #  - cron: 58 15 * * *
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@main
+      - name: 获取Hash
+        id: getHash
+        run: |
+          docker pull $IMAGE_NAME
+          echo "commitHash=$(docker images -q $IMAGE_NAME )" >> $GITHUB_OUTPUT
+      - name: 比较Hash
+        id: cacheHash
+        uses: actions/cache@main
+        with:
+          path: .commitHash
+          key: HEAD-${{ steps.getHash.outputs.commitHash }}
+      - name: 保存Hash，设置微信推送变量
+        if: ${{ always() }}
+        run: |
+          if [ "${{steps.cacheHash.outputs.cache-hit}}" = "true" ];then
+            echo "STATUS=✅ Nginx无更新 | 暂停构建" >> $GITHUB_ENV
+          else
+            if [ -n "${{ steps.getHash.outputs.commitHash }}" ];then
+              echo "STATUS=✅ Nginx有更新 | 开始构建" >> $GITHUB_ENV
+              curl -X POST https://api.github.com/repos/binge8/nginx/dispatches -H "Accept: application/vnd.github.everest-preview+json" -H "Authorization: token ${{ secrets.RELEASES_TOKEN }}" --data '{"event_type": "nginx"}'
+              echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
+            else
+              echo "STATUS=❌ Nginx更新检测失败" >> $GITHUB_ENV
+            fi
+          fi
+      - name: 删除运行记录
+        if: ${{ always() }}
+        uses: Mattraks/delete-workflow-runs@main
+        with:
+          token: ${{ secrets.RELEASES_TOKEN }}
+          repository: ${{ github.repository }}
+          retain_days: 5
+          keep_minimum_runs: 3
+      - name: 企业微信应用消息推送
+        if: ${{ always() }}
+        env:
+          CORP_ID: ${{ secrets.CORP_ID }}
+          CORP_SECRET: ${{ secrets.CORP_SECRET }}
+          AGENT_ID: ${{ secrets.AGENT_ID }}
+          TEXT:  |
+            🚀GitHub Action 通知
+            
+            仓库: ${{ github.repository }}
+            -----------------------------
+            ${{ env.STATUS }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}  # 代理（可选）
+        run: |
+          wget --no-check-certificate https://ac.cxw28.cn/notify.py && chmod +x notify.py
+          python3 notify.py
